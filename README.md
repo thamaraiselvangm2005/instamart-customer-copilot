@@ -26,7 +26,17 @@ Run these commands in order from the repository folder (Python 3.11 or newer).
 9. `python src/part_a_sql.py`
 10. `python src/part_a_pandas.py`
 
-Parts B, C and D commands will be added here as those parts are finished.
+11. `python src/part_b_rfm.py`
+12. `python src/part_b_kmeans.py`
+13. `python src/part_b_segments.py`
+14. `python src/part_b_lapse_data.py`
+15. `python src/part_b_train.py`
+16. `python src/part_b_finish.py`
+17. `python src/part_c_triage.py`
+18. `python src/part_d_policy_rag.py`
+19. `python src/part_d_agent.py`
+
+Every script prints its results next to the reference values. Steps 13 to 19 create the files in `outputs/` and `state/`.
 
 ## Part A
 
@@ -130,16 +140,204 @@ We also checked whether order amount, discount, quantity and delivery time are c
 
 ## Part B
 
-To be completed.
+### RFM table
+
+Snapshot date 2025-10-01. Only completed orders count. For every customer: recency = days since the last completed order, frequency = number of distinct completed orders, monetary = total order_amount.
+
+| Measure | Value |
+| --- | --- |
+| Customers with at least one completed order | 1,175 |
+| Recency: median / min / max (days) | 19 / 0 / 180 |
+| Frequency: mean / max | 9.46 / 33 |
+| Monetary: mean / max (INR) | 2,552.06 / 14,766.55 |
+
+### K-means (K = 2 to 8)
+
+The three RFM columns were standardised first (`StandardScaler`), then K-means was run with `n_init=10` and `random_state=42`.
+
+| K | Inertia | Silhouette |
+| --- | --- | --- |
+| 2 | 1820.8 | 0.465 |
+| 3 | 1268.2 | 0.445 |
+| 4 | 743.1 | 0.526 |
+| 5 | 617.4 | 0.480 |
+| 6 | 503.2 | 0.482 |
+| 7 | 408.5 | 0.416 |
+| 8 | 366.5 | 0.412 |
+
+**Choice of K = 4.** Inertia falls steeply until K = 4 and only slowly after it (the elbow), and K = 4 has the highest silhouette score (0.526) among K = 3, 4 and 5. Four groups are also few enough for a business team to act on.
+
+**Why inertia alone cannot choose K.** Inertia at K = 8 (366.5) is lower than at K = 2 (1820.8) because more clusters always put every point closer to its centre. With one cluster per customer inertia would be zero, so inertia always favours more clusters and needs the elbow and the silhouette score to judge them.
+
+### Segments
+
+| Segment | Size | Mean recency (days) | Mean frequency | Mean monetary (INR) | Business name | Recommended action |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 138 | 24.12 | 6.77 | 7,129.70 | Premium Big Spenders | VIP treatment: early access, personal offers, priority support |
+| 2 | 419 | 8.77 | 19.40 | 3,410.02 | Loyal Regulars | Reward loyalty: points, subscriptions, bundles to raise basket size |
+| 0 | 436 | 28.86 | 3.77 | 1,057.62 | Casual Shoppers | Nudge to order more often: free-delivery threshold, category offers |
+| 3 | 182 | 109.04 | 2.20 | 685.99 | Dormant Customers | Win-back campaign: reminder message plus a comeback discount |
+
+The cluster numbers are only labels and have no order, so the names were chosen from the numbers (highest mean monetary = Premium, longest recency = Dormant, highest frequency among the rest = Loyal). PCA on the scaled RFM matrix keeps 63.4% and 21.8% of the variance in its first two components, 85.2% in total. The result is saved as `outputs/customer_segments.csv` (1,175 rows; 138 Premium customers).
+
+### Lapse prediction
+
+- **Problem:** by 2025-09-01, which customers will place no completed order in September 2025 (1 to 30 September)?
+- **Cohort:** customers with at least one completed order before 2025-09-01: 1,156 customers, of whom 443 lapsed (38.32%).
+- **Features** (only orders before the cutoff): recency, frequency, monetary, average discount, cancellation rate, average delivery minutes, age, tenure in days, favourite category, city and gender.
+- **Split:** stratified 80/20 with `random_state=42`: 924 training rows (354 lapsed, 570 not lapsed) and 232 test rows.
+- **Baseline** "nobody lapses" on the test set: accuracy 61.6%, F1 of the lapsed class 0.00.
+
+**No leakage.** Features use only orders dated before 2025-09-01, and the label comes from September. The scaler and the one-hot encoder sit inside a scikit-learn Pipeline, so they are fitted on training rows only; the cross-validation folds are refitted inside the pipeline as well. The scaler's frequency mean is 8.115 (training rows) while the mean of the whole cohort is 8.029: they differ because the test rows must never influence the scaler. The segment labels were not used as features.
+
+**Tuning** (5-fold cross-validated F1 of the lapsed class, training data only):
+
+| Model | Best setting | CV F1 |
+| --- | --- | --- |
+| Logistic regression | C = 100 | 0.651 |
+| Random forest (100 trees) | max_depth = 8, min_samples_leaf = 10 | 0.687 |
+
+**Test-set results** (lapsed = positive class; confusion matrix is [[TN, FP], [FN, TP]]):
+
+| Model | Confusion matrix | Precision | Recall | F1 |
+| --- | --- | --- | --- | --- |
+| Logistic regression | [[111, 32], [31, 58]] | 0.644 | 0.652 | 0.648 |
+| Random forest | [[111, 32], [32, 57]] | 0.640 | 0.640 | 0.640 |
+
+**Selected model: random forest.** It has the higher cross-validated F1 (0.687 against 0.651), chosen on the training data so the test set did not pick the winner. On the test set the two models are almost equal (F1 0.640 and 0.648, both above 0.55 and far above the baseline of 0). For a retention team a missed lapsing customer costs more than a wasted offer, so recall matters, and the forest also handles non-linear effects.
+
+**Class-balance experiment.** The lapsed training rows were randomly copied (with `random_state=42`) until both classes had 570 rows. Only the training set was changed; the test set is the original one.
+
+| Logistic regression (C = 100) | Precision | Recall | F1 |
+| --- | --- | --- | --- |
+| Original training data | 0.644 | 0.652 | 0.648 |
+| Balanced training data | 0.589 | 0.854 | 0.697 |
+
+Recall changed most (0.652 to 0.854) and precision fell (0.644 to 0.589). The balanced model finds many more lapsing customers but also flags more customers who would have stayed.
+
+**Interpretation.** The five most important random-forest features are monetary (0.278), frequency (0.277), recency (0.111), average delivery minutes (0.062) and average discount (0.053). In the logistic regression the recency coefficient is +0.040 (more days since the last order, higher chance of lapsing), frequency is -1.698 (frequent buyers stay) and cancellation rate is -0.124 (a very small effect).
+
+**Saved model and retention list.** The random forest is saved as `outputs/lapse_model.joblib`; reloading it gives exactly the same predictions on the test set. `outputs/retention_list.csv` holds the ten Premium test-set customers with the highest predicted lapse probability.
+
+| customer_id | lapse_probability | actually_lapsed |
+| --- | --- | --- |
+| C0862 | 0.5304 | 0 |
+| C0060 | 0.4765 | 0 |
+| C1008 | 0.4756 | 0 |
+| C0267 | 0.4753 | 0 |
+| C0133 | 0.4712 | 0 |
+| C0942 | 0.4688 | 0 |
+| C1000 | 0.4654 | 0 |
+| C0553 | 0.4645 | 0 |
+| C1112 | 0.4620 | 0 |
+| C0565 | 0.4603 | 1 |
+
+Only 1 of these 10 customers truly lapsed. This list is illustrative and is not a leakage-free evaluation, because the Premium flag comes from RFM numbers calculated over the whole period, which includes September.
 
 ## Part C
 
-To be completed.
+All model calls go through the offline `mock_llm.py`. Tickets are processed in file order.
+
+### Guardrails and privacy
+
+| Step | Result |
+| --- | --- |
+| Empty tickets (skipped, `skipped_empty`) | 4 |
+| Tickets above 400 estimated tokens (`flagged_long`) | 4 |
+| Redaction (applied in this order: email, phone, order id) | 55 emails, 91 phones, 132 order ids, 278 in total |
+| Matches left after applying the three patterns again | 0 |
+
+Each ticket is redacted before it is sent, so the model only sees placeholders such as `[EMAIL]`, `[PHONE]` and `[ORDER_ID]`. The script asserts that no email, phone number or order id appears in any message sent to the model.
+
+### Prompts, retries and validation
+
+The zero-shot prompt asks for one of billing, delivery, technical or fraud and for JSON only. The few-shot prompt has the same instruction plus a line `EXAMPLES:` with three labelled examples, including one fraud example.
+
+Transient errors are retried up to 3 times with exponential backoff and a random factor: wait = 0.05 x 2^retry x uniform(0.9, 1.15) seconds. In a full run there were 19 retries, with waits between 0.0481 s and 0.0573 s, and every ticket succeeded after at most one retry.
+
+Every answer is validated. Valid JSON with an allowed category is `classified_json`; if the text is not JSON but contains exactly one allowed category word it is `classified_keyword`; everything else (including valid JSON with an unknown category) is `flagged_invalid_output` and never guessed.
+
+Status counts of a full zero-shot run: 135 `classified_json`, 12 `classified_keyword`, 9 `flagged_invalid_output`, 4 `skipped_empty` and 4 `flagged_long` (164 tickets).
+
+### Zero-shot against few-shot
+
+| Prompt | Classified | Accuracy | Total tokens | Tokens per classified ticket |
+| --- | --- | --- | --- | --- |
+| Zero-shot | 147 | 85.7% (126 of 147) | 8,308 | 56.5 |
+| Few-shot | 147 | 100.0% (147 of 147) | 17,200 | 117.0 |
+
+Confusion table of the zero-shot run (rows = true category, columns = predicted):
+
+| | billing | delivery | fraud | technical |
+| --- | --- | --- | --- | --- |
+| billing | 38 | 0 | 0 | 0 |
+| delivery | 0 | 36 | 0 | 0 |
+| fraud | 11 | 0 | 23 | 0 |
+| technical | 10 | 0 | 0 | 29 |
+
+**Is few-shot worth the cost?** Few-shot uses about twice as many tokens per ticket (117.0 against 56.5), but it removes every mistake (85.7% to 100.0%). All zero-shot errors were fraud (11) and technical (10) tickets read as billing. A fraud ticket sent to the billing queue is slow and risky, so the extra tokens are worth paying when mistakes are costly; zero-shot would only be enough for low-risk, high-volume tickets.
+
+### Token budget
+
+With `TOKEN_BUDGET = 6000` and the zero-shot prompt, 43 tickets were marked `budget_exhausted` (6,012 tokens were used before the check stopped further calls). The result is saved in `outputs/triage_budget_demo.csv`.
+
+### Routing
+
+The final run (few-shot, budget 100,000) is saved in `outputs/triage_results.csv`. Rules: any ticket that was skipped, too long, invalid or budget-exhausted goes to `human_review`; a `fraud` ticket goes to `security_team` with priority HIGH; any other ticket of a Premium customer goes to `premium_desk` with priority HIGH; everything else goes to `support_queue`.
+
+| Route | Tickets |
+| --- | --- |
+| support_queue | 102 |
+| security_team | 34 |
+| human_review | 17 |
+| premium_desk | 11 |
+
+Priorities: 45 HIGH and 119 NORMAL. Tickets classified by the model and accepted by the validation rules were routed automatically; the 17 `human_review` tickets are the ones that need a person.
 
 ## Part D
 
-To be completed.
+### Policy documents, chunking and retrieval
+
+The five policy files are split into chunks of 40 words that overlap by 10 words (step 30). This gives 15 chunks: refund 4, delivery 3, escalation 3, payment 3 and privacy 2. Retrieval uses `TfidfVectorizer` and cosine similarity; the question is transformed with the same fitted vectorizer. For the query "refund policy late delivery" all three best chunks come from `refund_policy.txt`. The answer step sends the three best chunks as `CONTEXT:` and the question as `QUESTION:` to the mock model.
+
+**Evaluation** (12 answerable and 2 unanswerable questions):
+
+| Setting | Chunks | Right document in the top 3 | Expected fact in the answer | Correct "could not find" |
+| --- | --- | --- | --- | --- |
+| Overlap 10 | 15 | 12 of 12 | 12 of 12 | 2 of 2 |
+| Zero overlap | 13 | 12 of 12 | 10 of 12 | 2 of 2 |
+
+With zero overlap two questions fail: "What delivery time makes a completed order eligible for a full refund?" (the expected "more than 45 minutes") and "How soon is money returned when a payment fails but is deducted?" (the expected "48 hours"). The sentence holding the answer is cut across two chunks, so the retrieved chunk no longer contains the fact. The 10-word overlap keeps the sentence together.
+
+**TF-IDF in one paragraph.** TF (term frequency) measures how often a word appears in a chunk. IDF (inverse document frequency) measures how rare the word is across all chunks, so words that appear everywhere count for little and distinctive words count for more. A limitation is that TF-IDF only matches the words themselves, so it misses synonyms and paraphrases (for example "money back" against "refund").
+
+### The refund agent
+
+The agent has five tools: `get_order` (reads the SQLite database), `search_policy` (uses the TF-IDF retrieval), `calculate_refund` (full order amount if delivery took more than 45 minutes, otherwise 0), `issue_refund` (refunds up to INR 1000 and writes a line to `outputs/refund_ledger.jsonl`) and `escalate_to_human` (for refunds above INR 1000, also written to the ledger). It follows the ReAct pattern: the model chooses a tool, the code runs it, the result goes back to the model, and this repeats until the model gives a final answer. Limits: at most 6 model calls, 6,000 tokens and 10 seconds. Every run is logged in `outputs/agent_runs.jsonl`.
+
+| Scenario | Status | Refund (INR) | Model calls | Tokens |
+| --- | --- | --- | --- | --- |
+| S1 | REFUND | 128.25 | 5 | 1,042 |
+| S2 | REFUND | 135.00 | 5 | 1,042 |
+| S3 | ESCALATE | 1,999.00 | 5 | 1,029 |
+| S4 | DENIED | 0.00 | 4 | 721 |
+| S5 | DENIED | 0.00 | 3 | 424 |
+| S6 | NOT_FOUND | 0.00 | 2 | 130 |
+| S7 | FALLBACK_MAX_ITERATIONS | 0.00 | 6 | 3,174 |
+
+All seven results match the expected outcomes. S7 keeps searching the policy and never finishes, so it stops after 6 calls and hands over to a human.
+
+**Stopping safely.** With `token_limit=200` the run on S1 stops with `FALLBACK_TOKEN_LIMIT` after 3 calls (441 tokens) without running the tool it had just requested. With `time_limit_seconds=0` it stops with `FALLBACK_TIMEOUT` before any model call. Each fallback returns a short hand-off summary for a human (status, number of calls and steps, and the last tool used).
+
+**Crash and resume.** After every tool result the full state (messages, tokens, steps, tools executed) is saved to `state/<run_id>.json`. In the demonstration S1 crashes after its second tool; `resume_agent` loads the checkpoint and continues. The tools executed over both parts are `get_order`, `search_policy`, `calculate_refund` and `issue_refund`, each exactly once, and the final result is REFUND of INR 128.25. The demonstration writes to its own ledger (`state/crash_demo_ledger.jsonl`), which holds exactly one line, so the refund was not issued twice.
+
+**ReAct or plan-and-execute for this agent.** In ReAct the agent decides one step at a time after seeing each result, so it can react to surprises, for example an order that does not exist (S6) or one that was cancelled (S5), and it stops early instead of running a fixed plan. Plan-and-execute writes the whole plan first and then runs it, which needs fewer model calls and is easier to inspect and test, but a plan made before seeing the order may contain steps that turn out to be useless or wrong. For refunds, where each step depends on the previous result (the order status decides whether the policy and the amount matter), ReAct is the better fit, as long as the limits above keep it from looping, as in S7.
 
 ## Limitations and Next Steps
 
-To be completed.
+- All data is synthetic and the model calls use an offline mock, so the numbers show that the pipeline works but say nothing about real customers or a real language model.
+- The lapse model uses one cutoff date and one random split. A time-based validation over several cutoffs would be more reliable.
+- The Premium flag is computed from RFM over the whole period, which includes September, so the retention list is illustrative and not a leakage-free evaluation (only 1 of the 10 listed customers truly lapsed).
+- TF-IDF retrieval only matches words; embeddings would also find paraphrases. The refund rule (a 45-minute threshold and an INR 1000 limit) is deliberately simple.
+- Next steps: add monitoring of the triage accuracy on real tickets, calibrate the lapse probabilities, and add a human approval step for escalated refunds.
+- This project was built with AI assistance, as permitted by the programme. I reviewed and tested the results and can explain every part.
