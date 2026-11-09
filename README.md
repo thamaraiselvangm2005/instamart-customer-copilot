@@ -339,4 +339,3 @@ All seven results match the expected outcomes. S7 keeps searching the policy and
 - The Premium flag is computed from RFM over the whole period, which includes September, so the retention list is illustrative and not a leakage-free evaluation (only 1 of the 10 listed customers truly lapsed).
 - TF-IDF retrieval only matches words; embeddings would also find paraphrases. The refund rule (a 45-minute threshold and an INR 1000 limit) is deliberately simple.
 - Next steps: add monitoring of the triage accuracy on real tickets, calibrate the lapse probabilities, and add a human approval step for escalated refunds.
-- This project was built with AI assistance, as permitted by the programme. I reviewed and tested the results and can explain every part.
