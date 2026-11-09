@@ -25,7 +25,6 @@ Run these commands in order from the repository folder (Python 3.11 or newer).
 8. `python src/part_a_store_validate.py`
 9. `python src/part_a_sql.py`
 10. `python src/part_a_pandas.py`
-
 11. `python src/part_b_rfm.py`
 12. `python src/part_b_kmeans.py`
 13. `python src/part_b_segments.py`
@@ -36,7 +35,7 @@ Run these commands in order from the repository folder (Python 3.11 or newer).
 18. `python src/part_d_policy_rag.py`
 19. `python src/part_d_agent.py`
 
-Every script prints its results next to the reference values. Steps 13 to 19 create the files in `outputs/` and `state/`.
+Every script prints its results next to the reference values. Steps 13, 16, 17 and 19 write the files in `outputs/`, and step 19 also writes the checkpoints in `state/`.
 
 ## Part A
 
@@ -165,9 +164,9 @@ The three RFM columns were standardised first (`StandardScaler`), then K-means w
 | 7 | 408.5 | 0.416 |
 | 8 | 366.5 | 0.412 |
 
-**Choice of K = 4.** Inertia falls steeply until K = 4 and only slowly after it (the elbow), and K = 4 has the highest silhouette score (0.526) among K = 3, 4 and 5. Four groups are also few enough for a business team to act on.
+**Choice of K = 4.** The elbow is the spot where the line on the graph stops dropping fast and starts going flat, like a bent arm, and for us that spot is K = 4, where inertia is 743.1. I did not pick K = 3 or K = 5 because K = 4 had the best silhouette score (0.526), which means its groups are the cleanest and most separate.
 
-**Why inertia alone cannot choose K.** Inertia at K = 8 (366.5) is lower than at K = 2 (1820.8) because more clusters always put every point closer to its centre. With one cluster per customer inertia would be zero, so inertia always favours more clusters and needs the elbow and the silhouette score to judge them.
+**Why inertia alone cannot choose K.** With 8 groups, inertia looks great (366.5, compared with 1820.8 at K = 2), but that is only because small groups sit close to their centres, and a shop team would have too many groups to act on. Inertia always gets smaller with more clusters because each point gets a centre closer to it, so a lower number alone does not prove the groups are good.
 
 ### Segments
 
@@ -204,7 +203,7 @@ The cluster numbers are only labels and have no order, so the names were chosen 
 | Logistic regression | [[111, 32], [31, 58]] | 0.644 | 0.652 | 0.648 |
 | Random forest | [[111, 32], [32, 57]] | 0.640 | 0.640 | 0.640 |
 
-**Selected model: random forest.** It has the higher cross-validated F1 (0.687 against 0.651), chosen on the training data so the test set did not pick the winner. On the test set the two models are almost equal (F1 0.640 and 0.648, both above 0.55 and far above the baseline of 0). For a retention team a missed lapsing customer costs more than a wasted offer, so recall matters, and the forest also handles non-linear effects.
+**Selected model: random forest.** We picked the model using the cross-validation score, which comes from the training data only. The random forest scored 0.687 and logistic regression scored 0.651. We did not use the test score to choose, because the test set must stay untouched until the end. On the test set the two models were almost the same (F1 0.640 for the forest and 0.648 for logistic regression), and both are far above the 0.55 minimum and the baseline of 0. For a retention team, missing a customer who will leave costs more than sending an offer to a customer who would have stayed, so finding lapsing customers (recall) matters most. The forest also handles non-linear patterns, which logistic regression cannot.
 
 **Class-balance experiment.** The lapsed training rows were randomly copied (with `random_state=42`) until both classes had 570 rows. Only the training set was changed; the test set is the original one.
 
@@ -215,7 +214,7 @@ The cluster numbers are only labels and have no order, so the names were chosen 
 
 Recall changed most (0.652 to 0.854) and precision fell (0.644 to 0.589). The balanced model finds many more lapsing customers but also flags more customers who would have stayed.
 
-**Interpretation.** The five most important random-forest features are monetary (0.278), frequency (0.277), recency (0.111), average delivery minutes (0.062) and average discount (0.053). In the logistic regression the recency coefficient is +0.040 (more days since the last order, higher chance of lapsing), frequency is -1.698 (frequent buyers stay) and cancellation rate is -0.124 (a very small effect).
+**Interpretation.** The five features that matter most for the random forest are monetary (0.278), frequency (0.277), recency (0.111), average delivery minutes (0.062) and average discount (0.053). In logistic regression, recency has a small positive coefficient (+0.040), so customers who bought longer ago are a bit more likely to lapse. Frequency has a large negative coefficient (-1.698), so customers who order often tend to stay. Cancellation rate has a very small effect (-0.124).
 
 **Saved model and retention list.** The random forest is saved as `outputs/lapse_model.joblib`; reloading it gives exactly the same predictions on the test set. `outputs/retention_list.csv` holds the ten Premium test-set customers with the highest predicted lapse probability.
 
@@ -275,7 +274,7 @@ Confusion table of the zero-shot run (rows = true category, columns = predicted)
 | fraud | 11 | 0 | 23 | 0 |
 | technical | 10 | 0 | 0 | 29 |
 
-**Is few-shot worth the cost?** Few-shot uses about twice as many tokens per ticket (117.0 against 56.5), but it removes every mistake (85.7% to 100.0%). All zero-shot errors were fraud (11) and technical (10) tickets read as billing. A fraud ticket sent to the billing queue is slow and risky, so the extra tokens are worth paying when mistakes are costly; zero-shot would only be enough for low-risk, high-volume tickets.
+**Is few-shot worth the cost?** Few-shot costs about twice as many tokens for each ticket (117.0 against 56.5), but it got every ticket right (100.0%, against 85.7% for zero-shot). The zero-shot mistakes were 11 fraud tickets and 10 technical tickets that were read as billing. A fraud ticket that waits in the billing queue can cause real harm, so the extra tokens are worth paying when a mistake is costly. When tickets are low risk and there are very many of them, zero-shot is cheaper and may be good enough.
 
 ### Token budget
 
@@ -307,9 +306,9 @@ The five policy files are split into chunks of 40 words that overlap by 10 words
 | Overlap 10 | 15 | 12 of 12 | 12 of 12 | 2 of 2 |
 | Zero overlap | 13 | 12 of 12 | 10 of 12 | 2 of 2 |
 
-With zero overlap two questions fail: "What delivery time makes a completed order eligible for a full refund?" (the expected "more than 45 minutes") and "How soon is money returned when a payment fails but is deducted?" (the expected "48 hours"). The sentence holding the answer is cut across two chunks, so the retrieved chunk no longer contains the fact. The 10-word overlap keeps the sentence together.
+With zero overlap two questions fail: "What delivery time makes a completed order eligible for a full refund?" (the expected "more than 45 minutes") and "How soon is money returned when a payment fails but is deducted?" (the expected "48 hours"). At zero overlap the sentence that holds each answer is cut between two chunks, and the best-matching chunk has only half of it (for example "receives a full refund of the order amount" without "more than 45 minutes"), so the fact is missing from the answer. The 10-word overlap keeps the sentence together.
 
-**TF-IDF in one paragraph.** TF (term frequency) measures how often a word appears in a chunk. IDF (inverse document frequency) measures how rare the word is across all chunks, so words that appear everywhere count for little and distinctive words count for more. A limitation is that TF-IDF only matches the words themselves, so it misses synonyms and paraphrases (for example "money back" against "refund").
+**TF-IDF in one paragraph.** TF (term frequency) counts how often a word appears in a chunk. IDF (inverse document frequency) checks how rare the word is across all the chunks, so a word that appears in every chunk counts for little, and a rare word counts for more. A chunk scores high when it contains the rare words from the question. The weakness is that TF-IDF only matches exact words, so it does not understand that "money back" and "refund" mean the same thing.
 
 ### The refund agent
 
@@ -331,7 +330,7 @@ All seven results match the expected outcomes. S7 keeps searching the policy and
 
 **Crash and resume.** After every tool result the full state (messages, tokens, steps, tools executed) is saved to `state/<run_id>.json`. In the demonstration S1 crashes after its second tool; `resume_agent` loads the checkpoint and continues. The tools executed over both parts are `get_order`, `search_policy`, `calculate_refund` and `issue_refund`, each exactly once, and the final result is REFUND of INR 128.25. The demonstration writes to its own ledger (`state/crash_demo_ledger.jsonl`), which holds exactly one line, so the refund was not issued twice.
 
-**ReAct or plan-and-execute for this agent.** In ReAct the agent decides one step at a time after seeing each result, so it can react to surprises, for example an order that does not exist (S6) or one that was cancelled (S5), and it stops early instead of running a fixed plan. Plan-and-execute writes the whole plan first and then runs it, which needs fewer model calls and is easier to inspect and test, but a plan made before seeing the order may contain steps that turn out to be useless or wrong. For refunds, where each step depends on the previous result (the order status decides whether the policy and the amount matter), ReAct is the better fit, as long as the limits above keep it from looping, as in S7.
+**ReAct or plan-and-execute for this agent.** In ReAct the agent takes one step, looks at the result, and then decides the next step. This suits the refund agent, because every step depends on the one before it. For example, if the order does not exist (S6) or was cancelled (S5), the agent can stop early instead of doing steps it had planned. In plan-and-execute the agent writes the whole plan first and then runs it. That uses fewer model calls and is easier to check, but the plan is made before the agent has seen the order, so some steps may turn out to be useless or wrong. For refunds, ReAct is the better choice, as long as limits stop it from looping forever, like S7, which kept searching until it reached the limit of 6 calls.
 
 ## Limitations and Next Steps
 
